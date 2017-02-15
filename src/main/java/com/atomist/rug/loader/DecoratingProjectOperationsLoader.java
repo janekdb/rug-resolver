@@ -1,29 +1,14 @@
 package com.atomist.rug.loader;
 
-import static scala.collection.JavaConverters.asJavaCollectionConverter;
-import static scala.collection.JavaConverters.asScalaBufferConverter;
-
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.stream.Collectors;
-
-import com.atomist.event.SystemEvent;
-import com.atomist.event.SystemEventHandler;
 import com.atomist.param.Parameter;
 import com.atomist.param.ParameterValue;
 import com.atomist.param.ParameterValues;
+import com.atomist.param.SimpleParameterValues;
 import com.atomist.param.Tag;
-import com.atomist.project.Executor;
 import com.atomist.project.ProjectOperation;
-import com.atomist.project.ProjectOperationArguments;
 import com.atomist.project.ProjectOperationInfo;
 import com.atomist.project.ProvenanceInfo;
 import com.atomist.project.ProvenanceInfoArtifactSourceReader;
-import com.atomist.project.SimpleProjectOperationArguments;
 import com.atomist.project.archive.Operations;
 import com.atomist.project.common.InvalidParametersException;
 import com.atomist.project.common.MissingParametersException;
@@ -33,35 +18,38 @@ import com.atomist.project.edit.ProjectEditor;
 import com.atomist.project.generate.ProjectGenerator;
 import com.atomist.project.review.ProjectReviewer;
 import com.atomist.project.review.ReviewResult;
-import com.atomist.rug.kind.service.ServiceSource;
 import com.atomist.rug.resolver.ArtifactDescriptor;
 import com.atomist.rug.resolver.DependencyResolver;
+import com.atomist.rug.runtime.SystemEventHandler;
+import com.atomist.rug.spi.Handlers;
 import com.atomist.source.Artifact;
 import com.atomist.source.ArtifactSource;
 import com.atomist.source.DirectoryArtifact;
 import com.atomist.source.FileArtifact;
 import com.atomist.tree.content.project.ResourceSpecifier;
 import com.atomist.tree.content.project.SimpleResourceSpecifier;
-
 import scala.Option;
 import scala.collection.JavaConverters;
 import scala.collection.Seq;
 import scala.runtime.AbstractFunction1;
 
-public class DecoratingOperationsLoader extends DefaultHandlerOperationsLoader {
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.stream.Collectors;
 
-    public DecoratingOperationsLoader(DependencyResolver resolver) {
+import static java.util.Comparator.comparing;
+import static scala.collection.JavaConverters.asJavaCollectionConverter;
+import static scala.collection.JavaConverters.asScalaBufferConverter;
+
+public class DecoratingProjectOperationsLoader extends DefaultProjectOperationsLoader {
+
+    public DecoratingProjectOperationsLoader(DependencyResolver resolver) {
         super(resolver);
-    }
-
-    @Override
-    protected List<SystemEventHandler> postProcess(ArtifactDescriptor artifact,
-            List<SystemEventHandler> handlers, ArtifactSource source) {
-        ResourceSpecifier gav = new SimpleResourceSpecifier(artifact.group(), artifact.artifact(),
-                artifact.version());
-
-        return handlers.stream().map(h -> new DecoratedSystemEventHandler(h, gav, source))
-                .collect(Collectors.toList());
     }
 
     @Override
@@ -75,24 +63,19 @@ public class DecoratingOperationsLoader extends DefaultHandlerOperationsLoader {
         List<ProjectGenerator> generators = asJavaCollectionConverter(operations.generators())
                 .asJavaCollection().stream().filter(g -> !g.name().equals("TypeDoc"))
                 .map(g -> new DecoratedProjectGenerator(g, gav, additionalPvs, source))
-                .sorted((e1, e2) -> e1.name().compareTo(e2.name())).collect(Collectors.toList());
+                .sorted(comparing(DecoratingProjectOperationsLoader.DelegatingProjectOperation::name)).collect(Collectors.toList());
         List<ProjectEditor> editors = asJavaCollectionConverter(operations.editors())
                 .asJavaCollection().stream()
                 .map(g -> new DecoratedProjectEditor(g, gav, additionalPvs, source))
-                .sorted((e1, e2) -> e1.name().compareTo(e2.name())).collect(Collectors.toList());
+                .sorted(comparing(DecoratingProjectOperationsLoader.DelegatingProjectOperation::name)).collect(Collectors.toList());
         List<ProjectReviewer> reviewers = asJavaCollectionConverter(operations.reviewers())
                 .asJavaCollection().stream()
                 .map(g -> new DecoratedProjectReviewer(g, gav, additionalPvs, source))
-                .sorted((e1, e2) -> e1.name().compareTo(e2.name())).collect(Collectors.toList());
-        List<Executor> executors = asJavaCollectionConverter(operations.executors())
-                .asJavaCollection().stream()
-                .map(g -> new DecoratedExecuter(g, gav, additionalPvs, source))
-                .sorted((e1, e2) -> e1.name().compareTo(e2.name())).collect(Collectors.toList());
+                .sorted(Comparator.comparing(DecoratingProjectOperationsLoader.DelegatingProjectOperation::name)).collect(Collectors.toList());
 
         return new Operations(asScalaBufferConverter(generators).asScala().toList(),
                 asScalaBufferConverter(editors).asScala().toList(),
-                asScalaBufferConverter(reviewers).asScala().toList(),
-                asScalaBufferConverter(executors).asScala().toList());
+                asScalaBufferConverter(reviewers).asScala().toList());
     }
 
     public static class DelegatingProjectOperation<T extends ProjectOperation>
@@ -184,23 +167,18 @@ public class DecoratingOperationsLoader extends DefaultHandlerOperationsLoader {
             return delegate;
         }
 
-        protected ProjectOperationArguments decorateProjectOperationArguments(
-                ProjectOperationArguments poa) {
-            return new ProjectOperationArguments() {
+        protected ParameterValues decorateParameterValues(
+                ParameterValues poa) {
+            return new ParameterValues() {
 
                 @Override
                 public Seq<ParameterValue> parameterValues() {
                     Map<String, ParameterValue> pvs = new HashMap<>();
                     pvs.putAll(
                             JavaConverters.mapAsJavaMapConverter(poa.parameterValueMap()).asJava());
-                    additionalParameterValues.stream().forEach(p -> pvs.put(p.getName(), p));
+                    additionalParameterValues.forEach(p -> pvs.put(p.getName(), p));
                     return JavaConverters.asScalaBufferConverter(new ArrayList<>(pvs.values()))
                             .asScala();
-                }
-
-                @Override
-                public String name() {
-                    return poa.name();
                 }
 
                 @Override
@@ -252,19 +230,6 @@ public class DecoratingOperationsLoader extends DefaultHandlerOperationsLoader {
         }
     }
 
-    private static class DecoratedExecuter extends DelegatingProjectOperation<Executor>
-            implements Executor {
-
-        public DecoratedExecuter(Executor delegate, ResourceSpecifier gav,
-                List<ParameterValue> additionalParameters, ArtifactSource source) {
-            super(delegate, gav, additionalParameters, source);
-        }
-
-        @Override
-        public void execute(ServiceSource serviceSource, ProjectOperationArguments poa) {
-            getDelegate().execute(serviceSource, decorateProjectOperationArguments(poa));
-        }
-    }
 
     private static class DecoratedProjectEditor extends DelegatingProjectOperation<ProjectEditor>
             implements ProjectEditor {
@@ -275,9 +240,9 @@ public class DecoratingOperationsLoader extends DefaultHandlerOperationsLoader {
         }
 
         @Override
-        public ModificationAttempt modify(ArtifactSource as, ProjectOperationArguments poa)
+        public ModificationAttempt modify(ArtifactSource as, ParameterValues poa)
                 throws MissingParametersException {
-            return getDelegate().modify(as, decorateProjectOperationArguments(poa));
+            return getDelegate().modify(as, decorateParameterValues(poa));
         }
 
         @Override
@@ -338,7 +303,7 @@ public class DecoratingOperationsLoader extends DefaultHandlerOperationsLoader {
         }
 
         @Override
-        public ArtifactSource generate(String projectName, ProjectOperationArguments poa)
+        public ArtifactSource generate(String projectName, ParameterValues poa)
                 throws InvalidParametersException {
             if (!this.hasOwnProjectNameParameter) {
                 List<ParameterValue> pvs = JavaConverters
@@ -347,12 +312,11 @@ public class DecoratingOperationsLoader extends DefaultHandlerOperationsLoader {
                         .filter(pv -> pv.getName().equals(PROJECT_NAME_PARAMETER_NAME)).findFirst();
                 if (projectNamePv.isPresent()) {
                     pvs.remove(projectNamePv.get());
-                    poa = new SimpleProjectOperationArguments(poa.name(),
-                            JavaConverters.asScalaBufferConverter(pvs).asScala());
+                    poa = new SimpleParameterValues(JavaConverters.asScalaBufferConverter(pvs).asScala());
                 }
             }
             ArtifactSource source = getDelegate().generate(projectName,
-                    decorateProjectOperationArguments(poa));
+                    decorateParameterValues(poa));
             return source.filter(new AbstractFunction1<DirectoryArtifact, Object>() {
                 @Override
                 public Object apply(DirectoryArtifact dir) {
@@ -384,8 +348,8 @@ public class DecoratingOperationsLoader extends DefaultHandlerOperationsLoader {
         }
 
         @Override
-        public ReviewResult review(ArtifactSource as, ProjectOperationArguments pos) {
-            return getDelegate().review(as, decorateProjectOperationArguments(pos));
+        public ReviewResult review(ArtifactSource as, ParameterValues pos) {
+            return getDelegate().review(as, decorateParameterValues(pos));
         }
     }
 
@@ -399,7 +363,7 @@ public class DecoratingOperationsLoader extends DefaultHandlerOperationsLoader {
         private SystemEventHandler delegate;
 
         public DecoratedSystemEventHandler(SystemEventHandler delegate, ResourceSpecifier gav,
-                ArtifactSource artifactSource) {
+                                           ArtifactSource artifactSource) {
             this.delegate = delegate;
             this.gav = gav;
             init(artifactSource);
@@ -422,8 +386,9 @@ public class DecoratingOperationsLoader extends DefaultHandlerOperationsLoader {
         }
 
         @Override
-        public void handle(SystemEvent event, ServiceSource serviceSource) {
-            delegate.handle(event, serviceSource);
+        public Option<Handlers.Plan> handle(com.atomist.rug.runtime.SystemEvent event) {
+            delegate.handle(event);
+            return null;
         }
 
         @Override

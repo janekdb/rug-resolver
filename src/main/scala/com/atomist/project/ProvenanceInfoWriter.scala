@@ -1,11 +1,10 @@
-package com.atomist.project;
+package com.atomist.project
 
+import com.atomist.param.ParameterValues
 import com.atomist.project.edit.ProjectEditor
 import com.atomist.project.generate.ProjectGenerator
-import com.atomist.source.{ ArtifactSource, StringFileArtifact }
+import com.atomist.source.{ArtifactSource, StringFileArtifact}
 import org.springframework.stereotype.Component
-import org.apache.commons.lang3.text.WordUtils
-import org.apache.commons.lang3.StringUtils
 
 @Component
 class ProvenanceInfoWriter {
@@ -13,7 +12,7 @@ class ProvenanceInfoWriter {
   val ProvenanceFile: String = ".atomist.yml"
   val SecretKeys: Seq[String] = Seq("password", "key", "secret", "token", "user")
 
-  def write(projectSource: ArtifactSource, po: ProjectOperation, poa: ProjectOperationArguments, client: String): ArtifactSource = {
+  def write(projectSource: ArtifactSource, po: ProjectOperation, poa: ParameterValues, client: String): ArtifactSource = {
 
     val content = write(po, poa, client)
 
@@ -26,20 +25,18 @@ class ProvenanceInfoWriter {
     projectSource.+(StringFileArtifact.apply(ProvenanceFile, updatedContent))
   }
 
-  def write(po: ProjectOperation, poa: ProjectOperationArguments, client: String): String = {
+  def write(po: ProjectOperation, poa: ParameterValues, client: String): String = {
     val content = new StringBuilder()
 
     content.append("---\n");
     content.append(s"""kind: "operation"\n""");
-    content.append(s"""client: "${client}"\n""");
+    content.append(s"""client: "$client"\n""");
 
     po match {
       case g: ProjectGenerator =>
         content.append("generator:\n")
       case e: ProjectEditor =>
         content.append("editor:\n")
-      case e: Executor =>
-        content.append("executor:\n")
       case _ =>
     }
 
@@ -60,7 +57,7 @@ class ProvenanceInfoWriter {
     def sanitizeValue(key: String, value: Any): Any = {
       value match {
         case s: String =>
-          if (SecretKeys.filter { sec => key.toLowerCase().contains(sec.toLowerCase()) }.isEmpty) {
+          if (!SecretKeys.exists { sec => key.toLowerCase().contains(sec.toLowerCase()) }) {
             s
           } else {
             s.charAt(0) + ("*" * (s.length() - 2)) + s.last
@@ -70,7 +67,7 @@ class ProvenanceInfoWriter {
 
     }
 
-    if (!poa.parameterValues.isEmpty) {
+    if (poa.parameterValues.nonEmpty) {
       content.append(s"""  parameters:\n""")
       poa.parameterValues.foreach(p => content.append(s"""    - "${p.getName}": "${sanitizeValue(p.getName, p.getValue)}"\n"""))
     }

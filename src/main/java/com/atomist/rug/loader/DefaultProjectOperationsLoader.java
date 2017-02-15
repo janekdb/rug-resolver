@@ -1,20 +1,5 @@
 package com.atomist.rug.loader;
 
-import static scala.collection.JavaConverters.asJavaCollectionConverter;
-import static scala.collection.JavaConverters.asScalaBufferConverter;
-
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileNotFoundException;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.util.StringUtils;
-
-import com.atomist.project.Executor;
 import com.atomist.project.ProjectOperation;
 import com.atomist.project.archive.DefaultAtomistConfig$;
 import com.atomist.project.archive.Operations;
@@ -37,38 +22,50 @@ import com.atomist.source.file.FileSystemArtifactSource;
 import com.atomist.source.file.SimpleFileSystemArtifactSourceIdentifier;
 import com.atomist.source.file.ZipFileArtifactSourceReader;
 import com.atomist.source.file.ZipFileInput;
-
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.util.StringUtils;
 import scala.Option;
 
-public class DefaultOperationsLoader implements OperationsLoader {
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 
-    private static final Logger LOGGER = LoggerFactory.getLogger(DefaultOperationsLoader.class);
+import static scala.collection.JavaConverters.asJavaCollectionConverter;
+import static scala.collection.JavaConverters.asScalaBufferConverter;
+
+public class DefaultProjectOperationsLoader implements ProjectOperationsLoader {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(DefaultProjectOperationsLoader.class);
 
     private final DependencyResolver resolver;
 
-    public DefaultOperationsLoader(DependencyResolver resolver) {
+    public DefaultProjectOperationsLoader(DependencyResolver resolver) {
         this.resolver = resolver;
     }
     
     @Override
-    public Operations load(ArtifactDescriptor artifact) throws OperationsLoaderException {
+    public Operations load(ArtifactDescriptor artifact) throws ProjectOperationsLoaderException {
         return load(artifact, null);
     }
 
     @Override
     public Operations load(String group, String artifact, String version)
-            throws OperationsLoaderException {
+            throws ProjectOperationsLoaderException {
         return load(new DefaultArtifactDescriptor(group, artifact, version, Extension.ZIP));
     }
 
     public final Operations load(String group, String artifact, String version,
-            ArtifactSource source) throws OperationsLoaderException {
+            ArtifactSource source) throws ProjectOperationsLoaderException {
         return load(new DefaultArtifactDescriptor(group, artifact, version, Extension.ZIP), source);
     }
 
     @Override
     public final Operations load(ArtifactDescriptor artifact, ArtifactSource source)
-            throws OperationsLoaderException {
+            throws ProjectOperationsLoaderException {
 
         String version = null;
         List<ArtifactDescriptor> dependencies;
@@ -79,7 +76,7 @@ public class DefaultOperationsLoader implements OperationsLoader {
             dependencies = resolver.resolveTransitiveDependencies(artifact);
         }
         catch (DependencyResolverException e) {
-            throw new OperationsLoaderException(String.format(
+            throw new ProjectOperationsLoaderException(String.format(
                     "Failed to resolveTransitiveDependencies dependencies for %s:%s:%s",
                     artifact.group(), artifact.artifact(), version), e);
         }
@@ -117,8 +114,7 @@ public class DefaultOperationsLoader implements OperationsLoader {
             operations = new Operations(
                     asScalaBufferConverter(Collections.<ProjectGenerator> emptyList()).asScala(),
                     asScalaBufferConverter(Collections.<ProjectEditor> emptyList()).asScala(),
-                    asScalaBufferConverter(Collections.<ProjectReviewer> emptyList()).asScala(),
-                    asScalaBufferConverter(Collections.<Executor> emptyList()).asScala());
+                    asScalaBufferConverter(Collections.<ProjectReviewer> emptyList()).asScala());
         }
 
         if (LOGGER.isInfoEnabled()) {
@@ -133,10 +129,6 @@ public class DefaultOperationsLoader implements OperationsLoader {
             sb.append("] reviewers: [");
             sb.append(StringUtils.collectionToDelimitedString(
                     asJavaCollectionConverter(operations.reviewerNames()).asJavaCollection(),
-                    ", "));
-            sb.append("] executors: [");
-            sb.append(StringUtils.collectionToDelimitedString(
-                    asJavaCollectionConverter(operations.executorNames()).asJavaCollection(),
                     ", "));
             sb.append("]");
             LOGGER.info(String.format("Loaded operations for %s:%s:%s: %s", artifact.group(),
@@ -181,7 +173,7 @@ public class DefaultOperationsLoader implements OperationsLoader {
 
     protected Operations loadArtifact(ArtifactDescriptor artifact, ArtifactSource source,
             ProjectOperationArchiveReader reader, List<ProjectOperation> otherOperations)
-            throws OperationsLoaderException {
+            throws ProjectOperationsLoaderException {
         try {
             return reader.findOperations(source,
                     Option.apply(artifact.group() + "." + artifact.artifact()),
@@ -190,7 +182,7 @@ public class DefaultOperationsLoader implements OperationsLoader {
         catch (RugRuntimeException e) {
             LOGGER.error(String.format("Failed to load Rug archive for %s:%s:%s", artifact.group(),
                     artifact.artifact(), artifact.version()), e);
-            throw new OperationsLoaderRuntimeException(
+            throw new ProjectOperationsLoaderRuntimeException(
                     String.format("Failed to load Rug archive for %s:%s:%s:\n  %s", artifact.group(),
                             artifact.artifact(), artifact.version(), e.getMessage()),
                     e);
